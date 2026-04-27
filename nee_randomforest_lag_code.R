@@ -1,5 +1,4 @@
-install.packages("ranger")
-install.packages("tidymodels")
+
 
 # ------ Load packages -----
 library(tidyverse)
@@ -47,22 +46,29 @@ targets <- terrestrial_targets |>
 met_variables <- c("air_temperature", "precipitation_flux", "surface_downwelling_shortwave_flux_in_air")
 
 # Past stacked weather -----
-weather_past_s3 <- neon4cast::noaa_stage3()
+weather_past_daily <- data.frame()
+for(i in 1:length(focal_sites)){
+  focal_site = focal_sites[i]
 
-weather_past <- weather_past_s3  |> 
-  dplyr::filter(site_id %in% focal_sites,
-                datetime >= ymd('2017-01-01'),
-                variable %in% met_variables) |> 
-  dplyr::collect()
-
-# aggregate the past to mean values
-weather_past_daily <- weather_past |> 
-  mutate(datetime = as_date(datetime)) |> 
-  group_by(datetime, site_id, variable) |> 
-  summarize(prediction = mean(prediction, na.rm = TRUE), .groups = "drop") |> 
-  # convert air temperature to Celsius if it is included in the weather data
-  mutate(prediction = ifelse(variable == "air_temperature", prediction - 273.15, prediction)) |> 
-  pivot_wider(names_from = variable, values_from = prediction)
+  weather_past_s3 <- neon4cast::noaa_stage3()
+  
+  weather_past <- weather_past_s3  |> 
+    dplyr::filter(site_id == focal_site,
+                  datetime >= ymd('2017-01-01'),
+                  variable %in% met_variables) |> 
+    dplyr::collect()
+  
+  # aggregate the past to mean values
+  weather_past_sub <- weather_past |> 
+    mutate(datetime = as_date(datetime)) |> 
+    group_by(datetime, site_id, variable) |> 
+    summarize(prediction = mean(prediction, na.rm = TRUE), .groups = "drop") |> 
+    # convert air temperature to Celsius if it is included in the weather data
+    mutate(prediction = ifelse(variable == "air_temperature", prediction - 273.15, prediction)) |> 
+    pivot_wider(names_from = variable, values_from = prediction)
+  
+  weather_past_daily <- rbind(weather_past_daily, weather_past_sub)
+}
 
 # Future weather forecast --------
 # New forecast only available at 5am UTC the next day
@@ -265,7 +271,7 @@ ggplot(data = forecast_df, mapping = aes(x = datetime, y = prediction, group = e
 
 
 
-#---- Covert to EFI standard ----
+#---- Convert to EFI standard ----
 
 # Make forecast fit the EFI standards
 forecast_df_EFI <- forecast_df %>%
