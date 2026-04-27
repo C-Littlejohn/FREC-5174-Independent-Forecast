@@ -1,4 +1,7 @@
 
+install.packages("ranger")
+install.packages("tidymodels")
+
 
 # ------ Load packages -----
 library(tidyverse)
