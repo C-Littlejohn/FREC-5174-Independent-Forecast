@@ -22,7 +22,7 @@ library(lubridate)
 # Change this for your model ID
 # Include the word "example" in my_model_id for a test submission
 # Don't include the word "example" in my_model_id for a forecast that you have registered (see neon4cast.org for the registration form)
-my_model_id <- 'nee_randomforest_lag'
+my_model_id <- 'nee_randfor_lag'
 
 
 # Read data #
@@ -115,7 +115,7 @@ forecast_df <- NULL
 
 for (s in 1:length(focal_sites)){
   
-  # Generate a dataframe to fit the model to 
+  # pull in targets 
   targets_lm <- targets |> 
     pivot_wider(names_from = 'variable', values_from = 'observation') |> 
     left_join(weather_past_daily, 
@@ -205,6 +205,10 @@ for (s in 1:length(focal_sites)){
   nee_full_fit <- final_workflow |> 
     fit(data = train_nee)
   
+  #----process uncertainty: residual SD from training fit ------
+  train_preds <- predict(nee_full_fit, new_data = train_nee)$.pred
+  resid_sd <- sd(train_nee$nee - train_preds, na.rm = TRUE)
+  
   ggplot(pred_test, aes(x = nee, y = .pred)) + geom_point()
   
   #add initial conditions uncertainty
@@ -212,11 +216,6 @@ for (s in 1:length(focal_sites)){
   targets_unc <- targets_lm |> filter(as.Date(datetime) %in% dates_2025)
   initc_sd <- sd(targets_unc$nee)
   initc_sd_df <- rnorm(n_members, mean = 0, sd = initc_sd)
- 
-  
-  
-  
-#take this bracket out to run forecast 
 
 
 
@@ -249,7 +248,7 @@ for (s in 1:length(focal_sites)){
                duration = "P1D")
       
       #generate prediction
-      forecast_pred <- predict(nee_full_fit, new_data = pred_df)$.pred
+      forecast_pred <- predict(nee_full_fit, new_data = pred_df)$.pred + rnorm(1, 0, resid_sd)
       
       forecast_df <- bind_rows(forecast_df,
                                tibble(
@@ -269,7 +268,8 @@ for (s in 1:length(focal_sites)){
 
 #plot forecasts
 ggplot(data = forecast_df, mapping = aes(x = datetime, y = prediction, group = ensemble)) +
-  geom_line()
+  geom_line()+
+  facet_wrap(~ site_id)
 
 
 
