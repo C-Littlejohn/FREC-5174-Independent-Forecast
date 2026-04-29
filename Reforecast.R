@@ -68,7 +68,7 @@ n_members <- 200
 forecast_df <- NULL
 
 #set reference datetime
-ref_datetime <- seq(as.Date("2025-01-01"), as.Date("2025-12-31"), by = "7 day")
+ref_datetime <- seq(as.Date("2025-01-01"), as.Date("2025-12-31"), by = "14 day")
 
 
 #loop through each site
@@ -133,7 +133,7 @@ for (s in 1:length(focal_sites)){
     
     #pre-process data
     set.seed(100)
-    split <- initial_split(targets_lm, prop = 0.80, strata = site_id)
+    split <- initial_split(training_data_trimmed, prop = 0.80)
     
     train_nee <- training(split)
     test_nee <- testing(split)
@@ -202,7 +202,7 @@ for (s in 1:length(focal_sites)){
     
     #train model on full dataset
     nee_full_fit <- final_workflow |> 
-      fit(data = train_nee)
+      fit(data = training_data_trimmed)
     
     ggplot(pred_test, aes(x = nee, y = .pred)) + geom_point()
     
@@ -323,28 +323,61 @@ combined_crps <- bind_rows(baseline_summary, my_crps_summary)
 
 
 #plot all models mean crps by horizon
-ggplot(data = combined_crps, mapping = aes(x = horizon, y = mean_crps, color = model_id)) + 
-geom_line() +
-labs(x = "Horizon (days)", y = "mean CRPS") +
-theme_bw()
+p_horizon <- ggplot(data = combined_crps, mapping = aes(x = horizon, y = mean_crps, color = model_id)) + 
+  geom_line() +
+  labs(x = "Horizon (days)", y = "mean CRPS", title = "CRPS by horizon") +
+  theme_bw()
+
+#plot crps by time
+my_crps_time <- crps_my_model |> 
+  group_by(model_id, datetime) |> 
+  summarize(mean_crps = mean(crps), .groups = "drop")
+baseline_time <- baseline_models |> 
+  group_by(model_id, datetime) |> 
+  summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
+crps_time_all <- bind_rows(my_crps_time, baseline_time)
+
+p_time <- ggplot(crps_time_all, aes(x = datetime, y = mean_crps, color = model_id)) +
+  geom_line() +
+  theme_bw() +
+  labs(x = "Date", y = "CRPS", title = "CRPS over time")
+
+#plot crps by nlcd class aka ecosystem type
+crps_with_class <- crps_my_model |> 
+  left_join(
+    site_data |> 
+      select(field_site_id, field_dominant_nlcd_classes),
+    by = c("site_id" = "field_site_id")
+  )
+
+crps_h7 <- crps_with_class |> 
+  filter(horizon == 7)
+
+crps_nlcd <- crps_h7 |> 
+  group_by(field_dominant_nlcd_classes) |> 
+  summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
+
+p_nlcd <- ggplot(crps_nlcd, aes(x = field_dominant_nlcd_classes, y = mean_crps)) +
+  geom_col() + 
+  theme_bw() + 
+  labs(x = "NLCD Class", y = "CRPS Horizon 7", title = "Forecast CRPS by land cover type")
 
 
-#---- Convert to EFI standard ----
-
-# Make forecast fit the EFI standards
-forecast_df_EFI <- forecast_df %>%
-  filter(datetime > forecast_date) %>%
-  mutate(model_id = my_model_id,
-         reference_datetime = forecast_date,
-         family = 'ensemble',
-         duration = 'P1D',
-         parameter = as.character(parameter),
-         project_id = 'neon4cast') %>%
-  select(datetime, reference_datetime, duration, site_id, family, parameter, variable, prediction, model_id, project_id)
 #---------------------------#
 
+#save key datasets to csv
 
+write_csv(crps_my_model, "crps_my_model_full.csv")
+write_csv(baseline_models, "crps_baseline_models_full.csv")
+write_csv(combined_crps, "crps_combined_summary.csv")
 
+write_csv(forecast_df, "forecast_ensembles.csv")
+
+#save plots as image files
+
+ggsave("crps_by_horizon.png", p_horizon, width = 8, height = 5, dpi = 300)
+ggsave("crps_over_time.png", p_time, width = 10, height = 5, dpi = 300)
+ggsave("crps_by_nlcd.png", p_nlcd, width = 8, height = 5, dpi = 300)
 
 
 
