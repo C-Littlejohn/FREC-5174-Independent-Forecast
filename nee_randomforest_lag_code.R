@@ -225,12 +225,15 @@ for (s in 1:length(focal_sites)){
   # Loop through all forecast dates
   for (t in 1:length(forecasted_dates)) {
   
+    #store this day's predicitons
+    current_preds <- numeric(n_members)
+    
     #loop over each ensemble member
     met_ens_id <- 0
     for(ens in 1:n_members){
+      print(paste(i, "-", t, "-", ens))
       if(met_ens_id <= 30){
         met_ens_id <- met_ens_id + 1
-        ens_nm <- paste0(ens, "-", met_ens_id)
       }else{
         met_ens_id <- 1
       }
@@ -250,6 +253,8 @@ for (s in 1:length(focal_sites)){
       #generate prediction
       forecast_pred <- predict(nee_full_fit, new_data = pred_df)$.pred + rnorm(1, 0, resid_sd)
       
+      current_preds[ens] <- forecast_pred #save prediction
+      
       forecast_df <- bind_rows(forecast_df,
                                tibble(
                                  datetime = forecasted_dates[t],
@@ -262,9 +267,12 @@ for (s in 1:length(focal_sites)){
                                ))
       
       
-  }
-}
-}
+    } #close ensemble loop
+    
+    prev_nee <- current_preds
+    
+  } #close date loop
+} #close site loop
 
 #plot forecasts
 ggplot(data = forecast_df, mapping = aes(x = datetime, y = prediction, group = ensemble)) +
