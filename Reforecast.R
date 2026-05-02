@@ -20,7 +20,7 @@ terrestrial_targets <- readr::read_csv(url, show_col_types = FALSE)
 site_data <- readr::read_csv("https://raw.githubusercontent.com/eco4cast/neon4cast-targets/main/NEON_Field_Site_Metadata_20220412.csv") |> 
   dplyr::filter(terrestrial == 1)
 
-focal_sites <- site_data$field_site_id
+focal_sites <- site_data$field_site_id[1:2]
 
 # Filter the targets
 targets <- terrestrial_targets |> 
@@ -68,7 +68,7 @@ n_members <- 200
 forecast_df <- NULL
 
 #set reference datetime
-ref_datetime <- seq(as.Date("2025-01-01"), as.Date("2025-12-31"), by = "14 day")
+ref_datetime <- seq(as.Date("2025-01-01"), as.Date("2025-12-31"), by = "30 day")
 
 
 #loop through each site
@@ -222,13 +222,15 @@ for (s in 1:length(focal_sites)){
     prev_nee <- tail(targets_lm$nee, 1) + initc_sd_df
     # Loop through all forecast dates
     for (t in 1:length(datetimes)) {
-      #loop over each ensemble member
+     
+      current_preds <- numeric(n_members)
+      
+       #loop over each ensemble member
       met_ens_id <- 0
       for(ens in 1:n_members){
         print(paste(rd, "-", t, "-", ens))
         if(met_ens_id <= 30){
           met_ens_id <- met_ens_id + 1
-          ens_nm <- paste0(ens, "-", met_ens_id)
         }else{
           met_ens_id <- 1
         }
@@ -248,7 +250,9 @@ for (s in 1:length(focal_sites)){
         #generate prediction
         forecast_pred <- predict(nee_full_fit, new_data = pred_df)$.pred + rnorm(1, 0, resid_sd)
         
-        forecast_df <- bind_rows(forecast_df,
+        current_preds[ens] <- forecast_pred
+        
+         forecast_df <- bind_rows(forecast_df,
                                  tibble(
                                    datetime = forecasted_dates[t],
                                    reference_datetime = forecast_date,
@@ -258,10 +262,13 @@ for (s in 1:length(focal_sites)){
                                    prediction = forecast_pred,
                                    variable = "nee"))
 
-      }
-    }
-  }
-}
+      } #close ensemble loop
+      
+      prev_nee <- current_preds
+      
+    } #close datetimes loop
+  } #close refdatetime loop
+} #close site loop
 
 
 #plot forecasts
