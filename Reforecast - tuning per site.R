@@ -251,10 +251,28 @@ ggplot(data = forecast_df, mapping = aes(x = datetime, y = prediction, group = e
   facet_wrap(~ site_id)
 
 
-#---------CRPS of reforecast------------
+#------Reforecast Evaluation------
+
+#pull in scores for baseline models
+
+all_results <- arrow::open_dataset("s3://anonymous@bio230014-bucket01/challenges/scores/bundled-parquet/project_id=neon4cast/duration=P1D/variable=nee/model_id=climatology?endpoint_override=sdsc.osn.xsede.org")
+climatology_df <- all_results |> dplyr::collect()
+
+
+all_results <- arrow::open_dataset("s3://anonymous@bio230014-bucket01/challenges/scores/bundled-parquet/project_id=neon4cast/duration=P1D/variable=nee/model_id=persistenceRW?endpoint_override=sdsc.osn.xsede.org")
+persistence_df <- all_results |> dplyr::collect()
+
+#pull in my model reforecast data
+forecast_df_all <- bind_rows(
+  read_csv("forecast_ensembles_1_10.csv"),
+  read_csv("forecast_ensembles_11_20.csv"),
+  read_csv("forecast_ensembles_21_30.csv"),
+  read_csv("forecast_ensembles_31_40.csv"),
+  read_csv("forecast_ensembles_41_47.csv")
+)
 
 # Add observations
-forecast_eval <- forecast_df |> 
+forecast_eval <- forecast_df_all |> 
   left_join(targets |> select(datetime, site_id, observation, variable),
             by = c("datetime", "site_id", "variable")) |> 
   rename(truth = observation) |> 
@@ -274,52 +292,62 @@ crps_my_model <- forecast_eval |>
     .groups = "drop") |> 
   mutate(model_id = "nee_randfor_lag")
 
-# Bring in baseline model info
-baseline_models <- arrow::open_dataset("s3://anonymous@bio230014-bucket01/challenges/scores/bundled-parquet/project_id=neon4cast/duration=P1D/variable=nee?endpoint_override=sdsc.osn.xsede.org") |> 
-  filter(reference_datetime > lubridate::as_datetime("2025-01-01"),
-         reference_datetime < lubridate::as_datetime("2025-12-31"),
-         model_id %in% c("climatology", "persistenceRW")) |> 
-  collect() 
 
-# Combine CRPS from my model and baselines
-baseline_crps <- baseline_models |> 
-  group_by(model_id, datetime, reference_datetime) |> 
-  slice(1) |> 
-  ungroup() |>
-  mutate(horizon = as.numeric(datetime - reference_datetime)) |> 
+#-----Clean everything up
+# Get the unique reference_datetimes (and sites) from my model
+model_specs <- crps_my_model |> 
+  distinct(site_id, reference_datetime)
+
+# Filter baseline models to only matching reference_datetimes
+climatology_filtered <- climatology_df |> 
+  inner_join(model_specs, by = c("site_id", "reference_datetime"))
+
+persistence_filtered <- persistence_df |> 
+  inner_join(model_specs, by = c("site_id", "reference_datetime"))
+
+
+#combine CRPS from my model and baselines
+baseline_crps <- bind_rows(
+  climatology_filtered |> mutate(model_id = "climatology"),
+  persistence_filtered |> mutate(model_id = "persistenceRW")
+) |> 
+  mutate(horizon = as.numeric(as.Date(datetime) - as.Date(reference_datetime))) |> 
   select(model_id, horizon, datetime, reference_datetime, crps)
 
-my_crps_summary <- crps_my_model %>%
-  group_by(model_id, horizon) %>%
+# --- Plot 1: Mean CRPS by Horizon ---
+my_crps_summary <- crps_my_model |> 
+  group_by(model_id, horizon) |> 
   summarize(mean_crps = mean(crps), .groups = "drop")
 
-baseline_summary <- baseline_crps %>%
-  group_by(model_id, horizon) %>%
+baseline_summary <- baseline_crps |> 
+  group_by(model_id, horizon) |> 
   summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
 
 combined_crps <- bind_rows(baseline_summary, my_crps_summary)
 
-# Plot all models mean CRPS by horizon
-p_horizon <- ggplot(data = combined_crps, mapping = aes(x = horizon, y = mean_crps, color = model_id)) + 
+p_horizon <- ggplot(combined_crps, aes(x = horizon, y = mean_crps, color = model_id)) + 
   geom_line() +
-  labs(x = "Horizon (days)", y = "mean CRPS", title = "CRPS by horizon") +
+  labs(x = "Horizon (days)", y = "Mean CRPS", title = "CRPS by Horizon") +
   theme_bw()
 
-# Plot CRPS by time
+# --- Plot 2: Mean CRPS by Time ---
 my_crps_time <- crps_my_model |> 
   group_by(model_id, datetime) |> 
   summarize(mean_crps = mean(crps), .groups = "drop")
-baseline_time <- baseline_models |> 
+
+baseline_time <- baseline_crps |> 
   group_by(model_id, datetime) |> 
   summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
+
 crps_time_all <- bind_rows(my_crps_time, baseline_time)
 
-p_time <- ggplot(crps_time_all, aes(x = datetime, y = mean_crps, color = model_id)) +
+p_time <- ggplot(crps_time_all, aes(x = as.Date(datetime), y = mean_crps, color = model_id)) +
   geom_line() +
-  theme_bw() +
-  labs(x = "Date", y = "CRPS", title = "CRPS over time")
+  labs(x = "Date", y = "Mean CRPS", title = "CRPS over Time") +
+  theme_bw()
 
-# Plot CRPS by NLCD class (ecosystem type)
+
+# --- Plot 3: CRPS by NLCD class  ---
 crps_with_class <- crps_my_model |> 
   left_join(
     site_data |> 
@@ -334,20 +362,66 @@ crps_nlcd <- crps_h7 |>
   group_by(field_dominant_nlcd_classes) |> 
   summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
 
-p_nlcd <- ggplot(crps_nlcd, aes(x = field_dominant_nlcd_classes, y = mean_crps)) +
+p_nlcd <- ggplot(crps_nlcd, aes(x = field_dominant_nlcd_classes, y = mean_crps, fill = field_dominant_nlcd_classes)) +
   geom_col() + 
   theme_bw() + 
-  labs(x = "NLCD Class", y = "CRPS Horizon 7", title = "Forecast CRPS by land cover type")
+  labs(x = "NLCD Class", y = "CRPS Horizon 7", title = "Forecast CRPS by land cover type", fill = "NLCD Class") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+#add climatology to this plot
+climatology_with_class <- climatology_filtered |> 
+  mutate(model_id = "climatology",
+         horizon = as.numeric(as.Date(datetime) - as.Date(reference_datetime))) |> 
+  left_join(site_data |> 
+              select(field_site_id, field_dominant_nlcd_classes),
+            by = c("site_id" = "field_site_id"))
+
+crps_with_class <- crps_my_model |> 
+  mutate(model_id = "nee_randfor_lag") |> 
+  left_join(site_data |> 
+              select(field_site_id, field_dominant_nlcd_classes),
+            by = c("site_id" = "field_site_id"))
+
+crps_h7 <- bind_rows(crps_with_class, climatology_with_class) |> 
+  filter(horizon == 7)
+
+crps_nlcd <- crps_h7 |> 
+  group_by(model_id, field_dominant_nlcd_classes) |> 
+  summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
+
+p_nlcd_both <- ggplot(crps_nlcd, aes(x = field_dominant_nlcd_classes, y = mean_crps, fill = field_dominant_nlcd_classes)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ model_id) +
+  theme_bw() +
+  labs(x = "NLCD Class", y = "CRPS Horizon 7", title = "Forecast CRPS by land cover type", fill = "NLCD Class") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
 
 #---------------------------#
 
-# Save key datasets to CSV
-write_csv(crps_my_model, "crps_my_model_full.csv")
-write_csv(baseline_models, "crps_baseline_models_full.csv")
-write_csv(combined_crps, "crps_combined_summary.csv")
-write_csv(forecast_df, "forecast_ensembles.csv")
+crps_h7 <- crps_h7 |> 
+  mutate(nlcd_simple = case_when(
+    str_detect(field_dominant_nlcd_classes, "Deciduous|Evergreen|Mixed Forest") ~ "Forest",
+    str_detect(field_dominant_nlcd_classes, "Grassland|Pasture|Hay") ~ "Grassland/Pasture",
+    str_detect(field_dominant_nlcd_classes, "Wetland|Emergent") ~ "Wetland",
+    str_detect(field_dominant_nlcd_classes, "Cultivated|Crops") ~ "Cropland",
+    str_detect(field_dominant_nlcd_classes, "Shrub|Scrub") ~ "Shrub/Scrub",
+    TRUE ~ "Other"
+  ))
 
-# Save plots as image files
+crps_nlcd <- crps_h7 |> 
+  group_by(model_id, nlcd_simple) |> 
+  summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
+
+p_nlcd_simple <- ggplot(crps_nlcd, aes(x = nlcd_simple, y = mean_crps, fill = model_id)) +
+  geom_col(position = "dodge") +
+  theme_bw() +
+  labs(x = "NLCD Class", y = "Mean CRPS at Horizon 7", 
+       title = "Forecast CRPS by land cover type", fill = "Model")
+
+
+#export and save plots
 ggsave("crps_by_horizon.png", p_horizon, width = 8, height = 5, dpi = 300)
 ggsave("crps_over_time.png", p_time, width = 10, height = 5, dpi = 300)
 ggsave("crps_by_nlcd.png", p_nlcd, width = 8, height = 5, dpi = 300)
+ggsave("crps_by_bins.png", p_nlcd_simple, width = 8, height = 5, dpi = 300)
+

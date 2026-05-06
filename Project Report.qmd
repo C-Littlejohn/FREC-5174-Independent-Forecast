@@ -1,0 +1,143 @@
+---
+title: "FREC-5174-Independent-Forecast-Report"
+format: 
+  html:
+    embed-resources: true
+editor: visual
+---
+
+# Project Report
+
+## Part 1 - Model Description
+
+### Model structure and rationale
+
+#### Overview:
+
+**Forecasted variable:** Net Ecosystem Exchange, NEE, of carbon dioxide.
+
+**Forecasting challenge:** NEON
+
+NEE is the movement of CO~2~ from the atmosphere to the ecosystem. At a daily resolution it is reported as g C m^-2^day^-1^. Negative values mean the ecosystem is absorbing CO~2~ from the atmosphere, and positive values mean the ecosystem is emitting CO~2~ to the atmosphere.
+
+To forecast NEE I chose to use a machine learning model called Random Forest. I chose this approach because Random Forest performs better than other machine learning models to predict NEE and is especially well suited for handling noisy ecological data (Abbasian et al. 2022). My model drivers were air temperature, precipitation flux, and surface downwelling shortwave radiation. I chose these drivers because they seem to best represent photosynthesis and respiration, which are key components of NEE. I also added a one-day lag of nee to somewhat capture environmental memory effects.
+
+#### In-Depth Model Structure:
+
+This forecasting model is an ensemble random forest regression model built using the ranger engine within the tidymodels framework in R. The model is trained independently for each NEON terrestrial site and generates probabilistic 30-day ahead forecasts of daily NEE by propagating an ensemble of 200 members forward through time. Model training data consisted of NEON daily NEE observations and NOAA weather data (NOAA stage 3) from January 2017 to the present. Three meteorological driver variables were used: mean daily air temperature, precipitation flux, and surface downwelling shortwave radiation flux. A one-day NEE lag was included to capture ecosystem memory. For each site, hyperparameter tuning was performed once on the full available training record. The training data were split 80/20 into training and test sets, with site identity used as a stratification variable to ensure balance representation across the split. Five-fold (had to decrease from 10 due to computational intensity) cross validation was applied to the training portion, and a grid of 25 hyperparameter combinations was evaluated for tuning. The hyperparameter combination that minimized RMSE was selected and used in the final workflow. The final workflow was then fit to the full training dataset prior to forecast generation.
+
+A forecast was generated from the current date as the reference datetime. Future meteorological driver data was obtained from NOAA (stage 2) ensemble forecasts starting on the day prior to the forecast date. This provided predictions of 31 ensembles across a 30-day horizon.
+
+My model predicts NEE at all 47 NEON terrestrial sites.
+
+### Explanation of substantive novelty
+
+My model differs from previous models and forecasts completed in class in that it is a machine learning approach. There is currently a random forest model that forecasts daily NEE in the NEON forecasting challenge catalog, however I am not able to see the code for this forecast. I am only able to determine my model's novelty by comparing it to the current model's description. My model incorporates lagged NEE and also uses different weather driver variables than the current model. I am unable to comment on substantial novelty in areas such as hyperparameter tuning or other model structural components without the ability to view the code.
+
+### Uncertainty sources and implementation
+
+Driver uncertainty was represented using the 30-member NOAA stage 2 ensemble weather forecast. This provides 30 different trajectories of future weather conditions. Initial condition uncertainty was represented by adding noise to the last observed NEE value prior to the forecast date. The standard deviation of the noise was estimated from NEE observations during January 2025. Each of the 200 ensembles members randomly drew from the SD distribution, thus providing unique noise to the starting NEE value used on the first day of the forecast. Process uncertainty was represented by drawing from a distribution of the standard deviation of the residuals of the model fit. Parameter uncertainty was not explicitly represented.
+
+### Responses from registration form
+
+What forecasting challenge are you registering for? **neon4cast**
+
+model_id: **nee_randfor_lag**
+
+Long name of the model: **Lagged Random Forest Ensemble NEE Forecast**
+
+Contact name: **Caitlin Littlejohn**
+
+Contact email: **clittlejohn25\@vt.edu**
+
+Can we publicly list your name and email as part of the model metadata? **No**
+
+Are the name and email for a course instructor? **No**
+
+Institution: **Virginia Tech**
+
+Web link to model code: **https://github.com/C-Littlejohn/FREC-5174-Independent-Forecast/blob/main/nee_randomforest_lag_code.R**
+
+Which category best matches your modeling approach? **Machine Learning**
+
+Describe your modeling approach: **The modeling approach uses a machine learning model called Random Forest fitted with the ranger function within the tidymodels framework in R. The model drivers are air temperature, precipitation flux, and surface downwelling shortwave radiation. It also includes a one-day lag of nee. The model predicts daily nee for all 47 terrestrial sites.**
+
+Does the forecast use drivers? **Yes**
+
+Does your forecast include uncertainty from drivers? **Yes**
+
+What are your model drivers? **air temperature, precipitation, and surface downwelling shortwave radiation**
+
+Is your forecast model dynamic? **Yes**
+
+Does your forecast include uncertainty from initial conditions? **Yes and they were estimated from data**
+
+Does your model include parameters? **Yes and at least one is estimated from data**
+
+Does your forecast include uncertainty from the model parameters? **No**
+
+Do you update your initial conditions or parameters between forecast submissions using newly available data? **No updating or assimilating was used**
+
+What method did you use if you updated your initial conditions or parameters using data assimilation? **Does not apply**
+
+Does your forecast include uncertainty from the model (process uncertainty)? **Yes and the uncertainty was estimated from data.**
+
+Does your forecast include uncertainty from measurement noise? **Yes and the noise were estimated from data**
+
+Does your forecast include uncertainty from using different models? **No**
+
+Does your model include uncertainty from parameter random effects? **No**
+
+## Part 2 - Reforecast Analysis
+
+#### Reforecast Overview:
+
+Focal sites: 47
+
+Horizon: 30
+
+Ensemble members: 150
+
+Reference Datetimes: Monthly throughout 2025
+
+Some trade-offs were made due to the computational demand of running the reforecast. Ensemble members were reduced from 200 to 150. Reforecast was only performed every 30 days, when weekly or daily would have been ideal. Hyperparameter tuning was performed per site instead of per reference datetime. Even with these trade-offs, it still took over 20 hours to run the reforecst.
+
+#### Reforecast Evaluation Plots
+
+I substantially changed my plots after the in class presentation. For CRPS by horizon and date, I was using all of the reference datetimes for the baseline models which resulted in an unfair comparison to my model. My model has 13 reference datetimes, but the baseline models have 365 reference datetimes. This issue has been fixed and the new plots are seen below.
+
+![Figure 1. CRPS by horizon for my model compared to the two baseline models.](C:/Users/caitl/OneDrive/Desktop/FREC-5174-Independent-Forecast\final%20plots\crps_by_horizon.png)
+
+![Figure 2. CRPS over time for my model compared to the two baseline models.](C:/Users/caitl/OneDrive/Desktop/FREC-5174-Independent-Forecast\final%20plots\crps_over_time.png)
+
+![Figure 3. CRPS of my model by NLCD land class.](C:/Users/caitl/OneDrive/Desktop/FREC-5174-Independent-Forecast\final%20plots\my_model_crps_nlcd.png){width="1029"}
+
+![Figure 4. CRPS of my model by binned NLCD land classes.](C:/Users/caitl/OneDrive/Desktop/FREC-5174-Independent-Forecast\final%20plots\crps_by_nlcd_bins.png)
+
+#### Written interpretation of results
+
+Figure 1 shows the mean CRPS by horizon aggregated for all sites and compared to the baseline models. This plot shows how forecast skill changes with lead time. As seen in this figure, my model performs better than persistence, but not climatology. The score of my model does not degrade meaningfully with horizon, which means that my model is as good at predicting the NEE value at the end of the forecast (day 30) as it is at the beginning of the forecast. Figure 2 shows mean CRPS over time aggregated for all sites and compared to the baseline models. This plot shows how forecast performance varies throughout the year. As seen in this figure, my model performance follows the same general trend as climatology. My model performs fairly well during the winter, but degrades in the summer. I believe this is because NEE dynamics are most complex during the summer months. Figure 3 shows the CRPS of my model by NLCD land cover type. This plot shows CRPS only at horizon 7. I thought this figure would help show if my model is performing better at certain land types than others. However, I think a skill score would have a been a more meaningful metric to use to show this. Also, there are too many NLCD land cover combinations for the plot to be easily interpreted. To solve these issues, I decided to plot the CRPS of my model by grouped NLCD land classes and compare it to the climatology baseline model, as seen in Figure 4. I grouped similar NLCD land classes together to help with plot interpretation. Similarly, this plot show CRPS only for horizon 7. This figure shows that my model is generally worse than climatology, which we already saw in previous plots, regardless of NLCD class. It is much worse at predicting in shrub/scrub and forested systems. However, my model is slightly better than climatology in grasslands. Overall, this reforecast analysis shows that my model is predicting NEE better than persistence, but worse than climatology. This indicates that improvements can be made to strengthen the model, such as adding more data inputs or increasing lag in variables to capture the complexity of NEE dynamics.
+
+The code for plots can be found in the "Reforecast - tuning per site" R script in my GitHub repo.
+
+## Part 3 - Reproducibility Checklist
+
+Model_id: nee_randfor_lag
+
+GitHub repository link: <https://github.com/C-Littlejohn/FREC-5174-Independent-Forecast>
+
+Forecast generation code link: <https://github.com/C-Littlejohn/FREC-5174-Independent-Forecast/blob/main/nee_randomforest_lag_code.R>
+
+Quarto report link:
+
+Evidence of multiple automated forecasts: <https://github.com/C-Littlejohn/FREC-5174-Independent-Forecast/actions>
+
+Link to model entry in the challenge catalog: <https://radiantearth.github.io/stac-browser/#/external/raw.githubusercontent.com/eco4cast/neon4cast-catalog/main/forecasts/Terrestrial/Daily_Net_ecosystem_exchange/models/nee_randfor_lag.json>
+
+### 
+
+## Sources Cited
+
+Abbasian, H., Solgi, E., Hosseini, S. M., & Kia, S. H. (2022). Modeling terrestrial net ecosystem exchange using machine learning techniques based on flux tower measurements. Ecological Modelling, 466, 109901.
+
+Akselrud, C. I. A. (2024). Random forest regression models in ecology: Accounting for messy biological data and producing predictions with uncertainty. Fisheries Research, 280, 107161.
